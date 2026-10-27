@@ -1,0 +1,21 @@
+steps:
+  # Step 1: Install dependencies and validate the application.
+  - name: 'node:22'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        npm install
+        npm run build
+
+  # Step 2: Deploy to Google App Engine.
+  - name: 'gcr.io/google.com/cloudsdktool/google-cloud-cli:stable'
+    entrypoint: 'gcloud'
+    args:
+      - 'app'
+      - 'deploy'
+      - 'app.yaml'
+      - '--quiet'
+
+options:
+  logging: CLOUD_LOGGING_ONLY
