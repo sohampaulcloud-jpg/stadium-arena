@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Stadium Crash Arena</title>
+<script src="/socket.io/socket.io.js"></script>
+<style>
+:root{--bg:#10131b;--panel:#1b2030;--gold:#f6c453;--muted:#aeb6cc}*{box-sizing:border-box}
+body{margin:0;background:radial-gradient(circle at top,#262d43,#10131b 65%);color:#f5f7fc;font-family:system-ui,Segoe UI,Arial,sans-serif;padding:18px}
+main{max-width:1200px;margin:auto}header{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:14px}
+h1{font-size:clamp(1.6rem,4vw,2.5rem);margin:0;letter-spacing:2px}h1 span{color:var(--gold)}.sub{color:var(--muted);margin:4px 0}
+.panel{background:#1b2030;border:1px solid #343c52;border-radius:16px;padding:15px;margin-bottom:14px}
+.joinrow{display:flex;gap:9px;flex-wrap:wrap}input{background:#101521;border:1px solid #3a435c;border-radius:10px;color:white;padding:12px;font:inherit;min-width:0;flex:1}
+button{background:var(--gold);border:0;border-radius:10px;padding:12px 16px;font-weight:850;cursor:pointer;color:#28200b}button:disabled{opacity:.4;cursor:not-allowed}.secondary{background:#343c52;color:white}
+.notice{color:#ffd778;min-height:22px;margin-top:8px}.topbar{display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:center}.pill{padding:7px 11px;border-radius:999px;background:#101521;color:#e8eaf2;border:1px solid #343c52;font-weight:700}
+#arena{display:block;width:100%;height:auto;border-radius:14px;background:#162c25;border:3px solid #5a4435;box-shadow:0 12px 36px #0005;touch-action:none}
+.below{display:grid;grid-template-columns:1fr 280px;gap:14px;margin-top:14px}.roster{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.driver{padding:9px 10px;background:#101521;border:1px solid #30384e;border-radius:10px}.driver.active{border-color:var(--gold);box-shadow:0 0 0 1px var(--gold)}.driver b{display:block;overflow-wrap:anywhere}.bar{height:7px;background:#343c52;border-radius:99px;overflow:hidden;margin-top:7px}.bar i{height:100%;display:block;background:#48d18b}.small{font-size:.88rem;color:var(--muted);line-height:1.5}.controls{display:grid;grid-template-columns:repeat(3,48px);gap:6px;justify-content:center;margin-top:10px}.controls button{padding:9px 0}.controls button[data-key="up"]{grid-column:2}.controls button[data-key="left"]{grid-column:1;grid-row:2}.controls button[data-key="down"]{grid-column:2;grid-row:2}.controls button[data-key="right"]{grid-column:3;grid-row:2}.controls button[data-key="fire"]{grid-column:2;grid-row:3;background:#f26c55;color:#fff}.touchhint{font-size:.8rem;color:#b9c1d4;text-align:center;margin:6px 0 0}
+@media(max-width:800px){body{padding:10px}.below{grid-template-columns:1fr}.roster{grid-template-columns:repeat(2,minmax(0,1fr))}}
+</style></head>
+<body><main>
+<header><div><h1>🏁 STADIUM <span>CRASH</span></h1><p class="sub">Six drivers. Three rounds. Total mayhem.</p></div><div class="pill">6 PLAYERS · 3 × 5 MIN</div></header>
+<section class="panel" id="lobby">
+ <div class="joinrow"><input id="name" maxlength="18" placeholder="Your driver name"><input id="code" maxlength="8" placeholder="Room code (e.g. NIGHT6)"><button id="join">Join arena</button><button id="start" class="secondary" disabled>Start match (6/6)</button></div>
+ <div class="notice" id="notice">Share the same room code with all six players. The match starts when all six have joined.</div>
+</section>
+<div class="topbar panel"><span class="pill" id="phase">LOBBY</span><span class="pill" id="round">Round — / 3</span><span class="pill" id="timer">05:00</span><span class="pill" id="status">Waiting for drivers…</span></div>
+<canvas id="arena" width="1000" height="650"></canvas>
+<div class="below">
+<section class="panel"><h3 style="margin-top:0">Drivers & health</h3><div class="roster" id="roster"></div></section>
+<section class="panel"><h3 style="margin-top:0">Controls</h3><p class="small">Keyboard: <b>WASD</b> or <b>arrow keys</b> to drive and turn. Hold <b>Space</b> to fire while armed. Grab a glowing weapon pickup to equip it.</p><p class="small">Weapons last 12 seconds. You can carry only one at a time; you cannot pick up another until it expires or is used up by the timer.</p><div class="controls">
+<button data-key="up">▲</button><button data-key="left">◀</button><button data-key="down">▼</button><button data-key="right">▶</button><button data-key="fire">FIRE</button></div><p class="touchhint">Buttons also work on touch screens.</p>
+</section></div>
+</main>
+<script>
+const socket=io();
+const canvas=document.getElementById('arena'),ctx=canvas.getContext('2d');
+const $=id=>document.getElementById(id);
+let state=null, joined=false;
+const held={up:false,down:false,left:false,right:false,fire:false};
+const weaponGlyph={machinegun:'MG',shotgun:'SG',rocket:'R'};
+function notice(s){$('notice').textContent=s}
+function join(){socket.emit('join',{name:$('name').value,code:$('code').value})}
+$('join').onclick=join;
+$('start').onclick=()=>socket.emit('start');
+socket.on('notice',notice);
+socket.on('state',s=>{
+ state=s;joined=!!s.players.find(p=>p.id===socket.id);
+ $('start').disabled=!s.players.length||s.players.length!==6||s.phase!=='lobby';
+ $('start').textContent=`Start match (${s.players.length}/6)`;
+ $('phase').textContent=s.phase.toUpperCase();
+ $('round').textContent=s.phase==='lobby'?'Round — / 3':`Round ${Math.min(s.round,3)} / 3`;
+ const secs=Math.max(0,s.timeLeft||0);$('timer').textContent=`${String(Math.floor(secs/60)).padStart(2,'0')}:${String(secs%60).padStart(2,'0')}`;
+ $('status').textContent=s.message||'';
+ $('roster').innerHTML=s.players.map(p=>`<div class="driver ${p.id===s.players.find(x=>x.id===socket.id)?.id?'active':''}"><b style="color:${p.color}">${escapeHtml(p.name)} ${p.alive?'':'💥'}</b><span class="small">${p.alive?`${Math.ceil(p.hp)} HP`:'WRECKED'} · ${p.weapon?`${weaponGlyph[p.weapon]} ${p.weaponLeft}s`:'Unarmed'} · Round wins ${Math.floor(p.score)}</span><div class="bar"><i style="width:${p.hp}%;background:${p.hp<30?'#ff4f64':'#48d18b'}"></i></div></div>`).join('');
+ if(s.phase==='finished'&&s.winner) notice(`Tournament winner: ${s.winner.name}! Use a new room code for another match.`);
+});
+function escapeHtml(v){return String(v).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
+function sendInput(){if(joined)socket.emit('input',held)}
+function setKey(k,v){if(held[k]===v)return;held[k]=v;sendInput()}
+const keymap={w:'up',ArrowUp:'up',s:'down',ArrowDown:'down',a:'left',ArrowLeft:'left',d:'right',ArrowRight:'right',' ':'fire',Spacebar:'fire'};
+window.addEventListener('keydown',e=>{const k=keymap[e.key];if(k){e.preventDefault();setKey(k,true)}});
+window.addEventListener('keyup',e=>{const k=keymap[e.key];if(k){e.preventDefault();setKey(k,false)}});
+window.addEventListener('blur',()=>{Object.keys(held).forEach(k=>held[k]=false);sendInput()});
+document.querySelectorAll('[data-key]').forEach(b=>{
+ const k=b.dataset.key;
+ for(const ev of ['pointerdown'])b.addEventListener(ev,e=>{e.preventDefault();setKey(k,true);b.setPointerCapture?.(e.pointerId)});
+ for(const ev of ['pointerup','pointercancel','lostpointercapture'])b.addEventListener(ev,e=>{e.preventDefault();setKey(k,false)});
+});
+function roundRect(x,y,w,h,r,fill,stroke){ctx.beginPath();ctx.roundRect(x,y,w,h,r);if(fill){ctx.fillStyle=fill;ctx.fill()}if(stroke){ctx.strokeStyle=stroke;ctx.stroke()}}
+function drawCar(p){
+ ctx.save();ctx.translate(p.x,p.y);ctx.rotate(p.angle);
+ ctx.globalAlpha=p.alive?1:.3;
+ ctx.fillStyle='#0007';roundRect(-19,-12,42,28,7,'#0006');
+ ctx.fillStyle=p.color;roundRect(-22,-13,44,26,7,p.color,'#ffffff');
+ ctx.fillStyle='#17202c';roundRect(-7,-9,18,18,4,'#17202c');
+ ctx.fillStyle='#c7e8ff';roundRect(-4,-7,12,6,2,'#c7e8ff');
+ ctx.fillStyle='#fff4b8';ctx.fillRect(17,-9,4,5);ctx.fillRect(17,4,4,5);
+ if(p.weapon){ctx.fillStyle='#1c2330';roundRect(-2,-4,29,8,3,'#1c2330');ctx.fillStyle='#fff';ctx.font='bold 9px system-ui';ctx.fillText(weaponGlyph[p.weapon],-1,3)}
+ ctx.restore();
+ ctx.font='bold 13px system-ui';ctx.textAlign='center';ctx.fillStyle='#fff';ctx.strokeStyle='#142018';ctx.lineWidth=3;
+ ctx.strokeText(p.name,p.x,p.y-26);ctx.fillText(p.name,p.x,p.y-26);
+ ctx.fillStyle='#141b20';ctx.fillRect(p.x-22,p.y-22,44,5);ctx.fillStyle=p.hp<30?'#ff4f64':'#48d18b';ctx.fillRect(p.x-22,p.y-22,44*Math.max(0,p.hp)/100,5);
+}
+function draw(){
+ ctx.clearRect(0,0,1000,650);
+ // stadium grass
+ ctx.fillStyle='#21513d';ctx.fillRect(0,0,1000,650);
+ for(let y=0;y<650;y+=80){ctx.fillStyle='rgba(255,255,255,.025)';ctx.fillRect(0,y,1000,40)}
+ // wall / track
+ ctx.lineWidth=24;ctx.strokeStyle='#78614b';ctx.strokeRect(16,16,968,618);
+ ctx.lineWidth=4;ctx.strokeStyle='#d4b98c';ctx.strokeRect(28,28,944,594);
+ ctx.setLineDash([16,12]);ctx.lineWidth=2;ctx.strokeStyle='#b7c6ae';ctx.strokeRect(65,65,870,520);ctx.setLineDash([]);
+ // start stripe
+ ctx.fillStyle='#ffffff55';for(let i=0;i<8;i++)ctx.fillRect(480+i*5,35,3,30);
+ // pickups
+ if(state)state.pickups.forEach(g=>{
+   const pulse=1+Math.sin(Date.now()/150)*.12;
+   ctx.save();ctx.translate(g.x,g.y);ctx.scale(pulse,pulse);
+   ctx.shadowBlur=18;ctx.shadowColor='#ffe66d';ctx.fillStyle='#ffe66d';ctx.beginPath();ctx.arc(0,0,17,0,Math.PI*2);ctx.fill();ctx.shadowBlur=0;
+   ctx.fillStyle='#222';ctx.font='bold 11px system-ui';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText(weaponGlyph[g.type],0,1);ctx.restore();
+ });
+ if(state){
+  state.bullets.forEach(b=>{ctx.fillStyle=b.kind==='rocket'?'#ff8d42':b.color;ctx.shadowBlur=10;ctx.shadowColor=ctx.fillStyle;ctx.beginPath();ctx.arc(b.x,b.y,b.kind==='rocket'?5:3.5,0,Math.PI*2);ctx.fill();ctx.shadowBlur=0});
+  state.players.forEach(drawCar);
+  if(state.phase==='lobby'){
+   ctx.fillStyle='#0009';roundRect(260,250,480,140,18,'#0009','#ffffff55');
+   ctx.fillStyle='#fff';ctx.textAlign='center';ctx.font='bold 28px system-ui';ctx.fillText('STADIUM CRASH ARENA',500,294);
+   ctx.font='18px system-ui';ctx.fillText(`${state.players.length}/6 drivers connected`,500,328);
+   ctx.font='14px system-ui';ctx.fillText('Join the same room code to get started',500,357);
+  } else if(state.phase==='intermission'||state.phase==='finished'){
+   ctx.fillStyle='#000a';roundRect(250,255,500,130,18,'#000a','#ffffff55');
+   ctx.fillStyle='#fff';ctx.textAlign='center';ctx.font='bold 25px system-ui';ctx.fillText(state.phase==='finished'?'TOURNAMENT COMPLETE':`ROUND ${state.round} COMPLETE`,500,300);
+   ctx.font='16px system-ui';ctx.fillText(state.phase==='finished'?(state.winner?`${state.winner.name} wins!`:'Game over'):'Next round starting shortly…',500,335);
+  }
+ }else{
+  ctx.fillStyle='#ffffff';ctx.textAlign='center';ctx.font='bold 26px system-ui';ctx.fillText('JOIN A ROOM TO ENTER THE STADIUM',500,320);
+ }
+ requestAnimationFrame(draw);
+}
+draw();
+</script></body></html>
