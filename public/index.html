@@ -45,7 +45,7 @@ $('start').onclick=()=>socket.emit('start');
 socket.on('notice',notice);
 socket.on('state',s=>{
  state=s;joined=!!s.players.find(p=>p.id===socket.id);
- $('start').disabled=!s.players.length||s.players.length!==6||s.phase!=='lobby';
+ $('start').disabled=!s.players.length||s.players.length<2||s.phase!=='lobby';
  $('start').textContent=`Start match (${s.players.length}/6)`;
  $('phase').textContent=s.phase.toUpperCase();
  $('round').textContent=s.phase==='lobby'?'Round — / 3':`Round ${Math.min(s.round,3)} / 3`;
