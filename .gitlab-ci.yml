@@ -1,0 +1,10 @@
+image: node:22
+
+stages:
+  - test
+
+syntax-check:
+  stage: test
+  script:
+    - node --check server.js
+    - test -f public/index.html
