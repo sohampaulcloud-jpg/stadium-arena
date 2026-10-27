@@ -179,7 +179,7 @@ io.on("connection",socket=>{
   socket.on("start",()=>{
     const room=rooms.get(socket.data.roomCode);
     if(!room)return socket.emit("notice","Join a room first.");
-    if(room.players.length!==6)return socket.emit("notice","Exactly 6 players are required to start.");
+    if(room.players.length<2)return socket.emit("notice","Exactly 6 players are required to start.");
     if(room.phase!=="lobby")return;
     beginGame(room);broadcast(room);
   });
