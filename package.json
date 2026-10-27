@@ -5,7 +5,8 @@
   "description": "Six-player real-time browser car combat game",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+"build": "node --check server.js"
   },
   "dependencies": {
     "express": "^4.21.2",
