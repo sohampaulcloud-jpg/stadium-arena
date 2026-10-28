@@ -197,6 +197,7 @@ io.on("connection",socket=>{
     if(room.phase!=="lobby")return;
     beginGame(room);broadcast(room);
   });
+
   socket.on("input",input=>{
     const room=rooms.get(socket.data.roomCode);
     if(!room||room.phase!=="playing")return;

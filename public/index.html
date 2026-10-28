@@ -20,7 +20,7 @@ button{background:var(--gold);border:0;border-radius:10px;padding:12px 16px;font
 <body><main>
 <header><div><h1>🏁 STADIUM <span>CRASH</span></h1><p class="sub">Six drivers. Three rounds. Total mayhem.</p></div><div class="pill">6 PLAYERS · 3 × 5 MIN</div></header>
 <section class="panel" id="lobby">
- <div class="joinrow"><input id="name" maxlength="18" placeholder="Your driver name"><input id="code" maxlength="8" placeholder="Room code (e.g. NIGHT6)"><button id="join">Join arena</button><button id="start" class="secondary" disabled>Start match (6/6)</button></div>
+ <div class="joinrow"><input id="name" maxlength="18" placeholder="Your driver name"><input id="code" maxlength="8" placeholder="Room code (e.g. NIGHT6)"><button id="join">Join arena</button><button id="start" class="secondary" disabled>Start match (6/6)</button><button id="restart" class="secondary" disabled>Restart with current members</button></div>
  <div class="notice" id="notice">Share the same room code with all six players. The match starts when all six have joined.</div>
 </section>
 <div class="topbar panel"><span class="pill" id="phase">LOBBY</span><span class="pill" id="round">Round — / 3</span><span class="pill" id="timer">05:00</span><span class="pill" id="status">Waiting for drivers…</span></div>
@@ -43,11 +43,13 @@ const weaponGlyph={machinegun:'MG',shotgun:'SG',rocket:'R'};
 function notice(s){$('notice').textContent=s}
 function join(){socket.emit('join',{name:$('name').value,code:$('code').value})}
 $('join').onclick=join;
+
 $('start').onclick=()=>socket.emit('start');
+$('restart').onclick=()=>socket.emit('start');
+
 socket.on('notice',notice);
 
 socket.on('explosion', impact => {
-    console.log("Received explosion.");
     createExplosion(
         impact.x,
         impact.y,
@@ -59,13 +61,17 @@ socket.on('explosion', impact => {
 socket.on('state',s=>{
  state=s;joined=!!s.players.find(p=>p.id===socket.id);
  $('start').disabled=!s.players.length||s.players.length<2||s.phase!=='lobby';
+  $('restart').disabled=!s.players.length||s.players.length<2||s.phase!=='finished';
  $('start').textContent=`Start match (${s.players.length}/6)`;
  $('phase').textContent=s.phase.toUpperCase();
  $('round').textContent=s.phase==='lobby'?'Round — / 3':`Round ${Math.min(s.round,3)} / 3`;
  const secs=Math.max(0,s.timeLeft||0);$('timer').textContent=`${String(Math.floor(secs/60)).padStart(2,'0')}:${String(secs%60).padStart(2,'0')}`;
  $('status').textContent=s.message||'';
  $('roster').innerHTML=s.players.map(p=>`<div class="driver ${p.id===s.players.find(x=>x.id===socket.id)?.id?'active':''}"><b style="color:${p.color}">${escapeHtml(p.name)} ${p.alive?'':'💥'}</b><span class="small">${p.alive?`${Math.ceil(p.hp)} HP`:'WRECKED'} · ${p.weapon?`${weaponGlyph[p.weapon]} ${p.weaponLeft}s`:'Unarmed'} · Round wins ${Math.floor(p.score)}</span><div class="bar"><i style="width:${p.hp}%;background:${p.hp<30?'#ff4f64':'#48d18b'}"></i></div></div>`).join('');
- if(s.phase==='finished'&&s.winner) notice(`Tournament winner: ${s.winner.name}! Use a new room code for another match.`);
+ if(s.phase==='finished'&&s.winner) {
+  notice(`Tournament winner: ${s.winner.name}! Use a new room code for another match.`);
+  $('restart').disabled = false;
+ }
 });
 function createExplosion(x, y, kind = 'machinegun', color = '#ffb347') {
     const presets = {
@@ -111,8 +117,6 @@ function createExplosion(x, y, kind = 'machinegun', color = '#ffb347') {
 
     const preset = presets[kind] || presets.machinegun;
     const now = performance.now();
-
-    console.log("Yes we are here.");
 
     // Fire, sparks and debris
     for (let i = 0; i < preset.count; i++) {
