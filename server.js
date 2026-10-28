@@ -88,9 +88,19 @@ function endRound(room) {
     },8000);
   }
 }
-function damage(room, target, amount, attackerId) {
+
+
+function damage(room, target, amount, attackerId, bullet) {
   if (!target.alive) return;
   target.hp=Math.max(0,target.hp-amount);
+  if(bullet && bullet.kind) {
+    io.to(room.code).emit("explosion", {
+      x: target.x,
+      y: target.y,
+      kind: bullet.kind,
+      color: bullet.color
+    });
+  }
   if (target.hp<=0) {
     target.alive=false; target.weapon=null;
     const attacker=room.players.find(p=>p.id===attackerId);
@@ -99,6 +109,7 @@ function damage(room, target, amount, attackerId) {
     if (room.players.filter(p=>p.alive).length<=1) endRound(room);
   }
 }
+
 function tick(room, dt) {
   if (room.phase!=="playing") return;
   const now=Date.now();
@@ -140,7 +151,10 @@ function tick(room, dt) {
     if(b.life<=0||b.x<0||b.x>W||b.y<0||b.y>H)return false;
     for(const p of room.players){
       if(!p.alive||p.id===b.owner)continue;
-      if(Math.hypot(p.x-b.x,p.y-b.y)<21){damage(room,p,b.damage,b.owner);return false;}
+      if(Math.hypot(p.x-b.x,p.y-b.y)<21){
+        damage(room,p,b.damage,b.owner, b);
+        return false;
+      }
     }
     return true;
   });

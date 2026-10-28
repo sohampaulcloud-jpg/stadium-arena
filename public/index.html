@@ -36,6 +36,8 @@ const socket=io();
 const canvas=document.getElementById('arena'),ctx=canvas.getContext('2d');
 const $=id=>document.getElementById(id);
 let state=null, joined=false;
+const explosions = [];
+let screenShake = 0;
 const held={up:false,down:false,left:false,right:false,fire:false};
 const weaponGlyph={machinegun:'MG',shotgun:'SG',rocket:'R'};
 function notice(s){$('notice').textContent=s}
@@ -43,6 +45,17 @@ function join(){socket.emit('join',{name:$('name').value,code:$('code').value})}
 $('join').onclick=join;
 $('start').onclick=()=>socket.emit('start');
 socket.on('notice',notice);
+
+socket.on('explosion', impact => {
+    console.log("Received explosion.");
+    createExplosion(
+        impact.x,
+        impact.y,
+        impact.kind,
+        impact.color
+    );
+});
+
 socket.on('state',s=>{
  state=s;joined=!!s.players.find(p=>p.id===socket.id);
  $('start').disabled=!s.players.length||s.players.length<2||s.phase!=='lobby';
@@ -54,6 +67,252 @@ socket.on('state',s=>{
  $('roster').innerHTML=s.players.map(p=>`<div class="driver ${p.id===s.players.find(x=>x.id===socket.id)?.id?'active':''}"><b style="color:${p.color}">${escapeHtml(p.name)} ${p.alive?'':'💥'}</b><span class="small">${p.alive?`${Math.ceil(p.hp)} HP`:'WRECKED'} · ${p.weapon?`${weaponGlyph[p.weapon]} ${p.weaponLeft}s`:'Unarmed'} · Round wins ${Math.floor(p.score)}</span><div class="bar"><i style="width:${p.hp}%;background:${p.hp<30?'#ff4f64':'#48d18b'}"></i></div></div>`).join('');
  if(s.phase==='finished'&&s.winner) notice(`Tournament winner: ${s.winner.name}! Use a new room code for another match.`);
 });
+function createExplosion(x, y, kind = 'machinegun', color = '#ffb347') {
+    const presets = {
+        machinegun: {
+            count: 10,
+            speedMin: 1.5,
+            speedMax: 4,
+            sizeMin: 1.5,
+            sizeMax: 3.5,
+            life: 280,
+            colors: ['#fff6a8', '#ffd43b', '#ff8c32'],
+            smoke: 0,
+            shockwave: false,
+            shake: 1
+        },
+
+        shotgun: {
+            count: 24,
+            speedMin: 2,
+            speedMax: 7,
+            sizeMin: 2,
+            sizeMax: 5,
+            life: 450,
+            colors: ['#fff3b0', '#ffbd3f', '#ff6b35', '#d83a24'],
+            smoke: 5,
+            shockwave: true,
+            shake: 3
+        },
+
+        rocket: {
+            count: 55,
+            speedMin: 2,
+            speedMax: 10,
+            sizeMin: 3,
+            sizeMax: 8,
+            life: 850,
+            colors: ['#fff4b0', '#ffd43b', '#ff8c32', '#ff3d22', '#9f1d16'],
+            smoke: 16,
+            shockwave: true,
+            shake: 8
+        }
+    };
+
+    const preset = presets[kind] || presets.machinegun;
+    const now = performance.now();
+
+    console.log("Yes we are here.");
+
+    // Fire, sparks and debris
+    for (let i = 0; i < preset.count; i++) {
+        const angle = Math.random() * Math.PI * 2;
+        const speed =
+            preset.speedMin +
+            Math.random() * (preset.speedMax - preset.speedMin);
+
+        explosions.push({
+            type: 'particle',
+            kind,
+            x,
+            y,
+            vx: Math.cos(angle) * speed,
+            vy: Math.sin(angle) * speed,
+            size:
+                preset.sizeMin +
+                Math.random() * (preset.sizeMax - preset.sizeMin),
+            color:
+                preset.colors[
+                    Math.floor(Math.random() * preset.colors.length)
+                ],
+            createdAt: now,
+            life: preset.life * (0.65 + Math.random() * 0.5),
+            gravity: kind === 'rocket' ? 0.04 : 0.08,
+            drag: kind === 'rocket' ? 0.975 : 0.94
+        });
+    }
+
+    // Smoke particles
+    for (let i = 0; i < preset.smoke; i++) {
+        const angle = Math.random() * Math.PI * 2;
+        const speed = 0.3 + Math.random() * 1.7;
+
+        explosions.push({
+            type: 'smoke',
+            kind,
+            x: x + (Math.random() - 0.5) * 12,
+            y: y + (Math.random() - 0.5) * 12,
+            vx: Math.cos(angle) * speed,
+            vy: Math.sin(angle) * speed - 0.5,
+            size: kind === 'rocket'
+                ? 10 + Math.random() * 15
+                : 5 + Math.random() * 8,
+            createdAt: now,
+            life: kind === 'rocket' ? 1200 : 650,
+            drag: 0.97
+        });
+    }
+
+    // Expanding circular blast
+    if (preset.shockwave) {
+        explosions.push({
+            type: 'shockwave',
+            kind,
+            x,
+            y,
+            createdAt: now,
+            life: kind === 'rocket' ? 500 : 250,
+            maxRadius: kind === 'rocket' ? 85 : 35,
+            color: color || '#ff9c42'
+        });
+    }
+
+    // Initial bright flash
+    if (kind === 'rocket' || kind === 'shotgun') {
+        explosions.push({
+            type: 'flash',
+            kind,
+            x,
+            y,
+            createdAt: now,
+            life: kind === 'rocket' ? 180 : 100,
+            maxRadius: kind === 'rocket' ? 55 : 24
+        });
+    }
+
+    screenShake = Math.max(screenShake, preset.shake);
+}
+function drawExplosions() {
+    const now = performance.now();
+
+    for (let i = explosions.length - 1; i >= 0; i--) {
+        const effect = explosions[i];
+        const age = now - effect.createdAt;
+        const progress = age / effect.life;
+
+        if (progress >= 1) {
+            explosions.splice(i, 1);
+            continue;
+        }
+
+        ctx.save();
+
+        if (effect.type === 'particle') {
+            effect.vx *= effect.drag;
+            effect.vy *= effect.drag;
+            effect.vy += effect.gravity;
+
+            effect.x += effect.vx;
+            effect.y += effect.vy;
+
+            const alpha = 1 - progress;
+            const radius = Math.max(0.5, effect.size * (1 - progress * 0.7));
+
+            ctx.globalAlpha = alpha;
+            ctx.fillStyle = effect.color;
+            ctx.shadowColor = effect.color;
+            ctx.shadowBlur = effect.kind === 'rocket' ? 15 : 7;
+
+            ctx.beginPath();
+            ctx.arc(effect.x, effect.y, radius, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Spark trail
+            if (effect.kind !== 'rocket') {
+                ctx.strokeStyle = effect.color;
+                ctx.lineWidth = Math.max(1, radius * 0.75);
+
+                ctx.beginPath();
+                ctx.moveTo(effect.x, effect.y);
+                ctx.lineTo(
+                    effect.x - effect.vx * 3,
+                    effect.y - effect.vy * 3
+                );
+                ctx.stroke();
+            }
+        }
+
+        if (effect.type === 'smoke') {
+            effect.vx *= effect.drag;
+            effect.vy *= effect.drag;
+
+            effect.x += effect.vx;
+            effect.y += effect.vy;
+
+            const radius = effect.size * (0.6 + progress * 1.2);
+
+            ctx.globalAlpha = (1 - progress) * 0.48;
+
+            const smokeGradient = ctx.createRadialGradient(
+                effect.x,
+                effect.y,
+                0,
+                effect.x,
+                effect.y,
+                radius
+            );
+
+            smokeGradient.addColorStop(0, '#53545b');
+            smokeGradient.addColorStop(0.55, '#303137');
+            smokeGradient.addColorStop(1, 'rgba(20,20,22,0)');
+
+            ctx.fillStyle = smokeGradient;
+            ctx.beginPath();
+            ctx.arc(effect.x, effect.y, radius, 0, Math.PI * 2);
+            ctx.fill();
+        }
+
+        if (effect.type === 'shockwave') {
+            const radius = effect.maxRadius * progress;
+
+            ctx.globalAlpha = 1 - progress;
+            ctx.strokeStyle =
+                effect.kind === 'rocket' ? '#ffbd54' : '#ffe7a0';
+            ctx.lineWidth = Math.max(1, 7 * (1 - progress));
+
+            ctx.beginPath();
+            ctx.arc(effect.x, effect.y, radius, 0, Math.PI * 2);
+            ctx.stroke();
+        }
+
+        if (effect.type === 'flash') {
+            const radius = effect.maxRadius * (0.4 + progress);
+
+            const gradient = ctx.createRadialGradient(
+                effect.x,
+                effect.y,
+                0,
+                effect.x,
+                effect.y,
+                radius
+            );
+
+            gradient.addColorStop(0, 'rgba(255,255,230,0.95)');
+            gradient.addColorStop(0.3, 'rgba(255,210,55,0.85)');
+            gradient.addColorStop(0.7, 'rgba(255,80,20,0.45)');
+            gradient.addColorStop(1, 'rgba(255,40,10,0)');
+
+            ctx.globalAlpha = 1 - progress;
+            ctx.fillStyle = gradient;
+
+            ctx.beginPath();
+            ctx.arc(effect.x, effect.y, radius, 0, Math.PI * 2);
+            ctx.fill();
+        }
+
+        ctx.restore();
+    }
+}
 function escapeHtml(v){return String(v).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
 function sendInput(){if(joined)socket.emit('input',held)}
 function setKey(k,v){if(held[k]===v)return;held[k]=v;sendInput()}
@@ -83,6 +342,19 @@ function drawCar(p){
 }
 function draw(){
  ctx.clearRect(0,0,1000,650);
+
+ctx.save();
+
+    if (screenShake > 0.1) {
+        const shakeX = (Math.random() - 0.5) * screenShake;
+        const shakeY = (Math.random() - 0.5) * screenShake;
+
+        ctx.translate(shakeX, shakeY);
+        screenShake *= 0.86;
+    } else {
+        screenShake = 0;
+    }
+
  // stadium grass
  ctx.fillStyle='#21513d';ctx.fillRect(0,0,1000,650);
  for(let y=0;y<650;y+=80){ctx.fillStyle='rgba(255,255,255,.025)';ctx.fillRect(0,y,1000,40)}
@@ -115,6 +387,9 @@ function draw(){
  }else{
   ctx.fillStyle='#ffffff';ctx.textAlign='center';ctx.font='bold 26px system-ui';ctx.fillText('JOIN A ROOM TO ENTER THE STADIUM',500,320);
  }
+     drawExplosions();
+
+    ctx.restore();
  requestAnimationFrame(draw);
 }
 draw();
